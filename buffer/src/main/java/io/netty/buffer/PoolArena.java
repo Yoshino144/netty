@@ -230,6 +230,7 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
     }
 
     void free(PoolChunk<T> chunk, ByteBuffer nioBuffer, long handle, int normCapacity, PoolThreadCache cache) {
+        //非内存池内存释放比较简单，直接物理释放
         if (chunk.unpooled) {
             int size = chunk.chunkSize();
             destroyChunk(chunk);
@@ -237,11 +238,16 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
             deallocationsHuge.increment();
         } else {
             SizeClass sizeClass = sizeClass(handle);
+            //先尝试放入线程本地缓存
+            //在线程本地缓存默认情况下，缓存tiny类型的poolSubpage数最多为512
+            //small类型的PoolSubpage数最多为256，normal类型的PoolSubpage数最多为64个
+            //这些配置都在PooledByteBufAllocator类中
             if (cache != null && cache.add(this, chunk, nioBuffer, handle, normCapacity, sizeClass)) {
                 // cached so not free it.
                 return;
             }
 
+            //当未成功放入缓存时，释放poolChunk
             freeChunk(chunk, handle, normCapacity, sizeClass, nioBuffer, false);
         }
     }

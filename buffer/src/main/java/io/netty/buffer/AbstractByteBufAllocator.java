@@ -14,6 +14,21 @@
  * under the License.
  */
 
+/**
+ * 在Netty源码中，内存部分涉及到的主要类包括：
+ * ByteBuf：用于表示可扩展字节容器的接口。它提供了操作字节缓冲区的一系列方法，例如读取、写入和复制等。
+ * AbstractByteBuf：ByteBuf接口的抽象实现类，提供了一些公共的字节操作方法。
+ * PooledByteBufAllocator：Netty中的内存分配器，用于分配ByteBuf对象。
+ * PoolArena：内存池区域的抽象基类。
+ * PoolChunk：内存块的抽象基类。
+ * PoolSubpage：内存子页的抽象基类。
+ * PoolChunkList：内存块列表，用于管理不同大小的内存块。
+ * 如果你想深入了解Netty的内存管理机制，建议先从PooledByteBufAllocator类开始看起，
+ * 了解其如何分配ByteBuf对象以及如何使用内存池来提高内存利用率。然后，
+ * 可以进一步了解PoolArena、PoolChunk和PoolSubpage等类，了解内存池是如何管理内存块和子页的。
+ * 最后，可以结合PoolChunkList类了解内存块列表的管理方式和实现细节。
+ */
+
 package io.netty.buffer;
 
 import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
@@ -28,7 +43,11 @@ import io.netty.util.internal.StringUtil;
  * Skeletal {@link ByteBufAllocator} implementation to extend.
  */
 public abstract class AbstractByteBufAllocator implements ByteBufAllocator {
+
+    //指定PooledByteBufAllocator内存池的默认初始容量
+    //表示每种内存块大小对应的初始化内存页数
     static final int DEFAULT_INITIAL_CAPACITY = 256;
+
     static final int DEFAULT_MAX_CAPACITY = Integer.MAX_VALUE;
     static final int DEFAULT_MAX_COMPONENTS = 16;
     static final int CALCULATE_THRESHOLD = 1048576 * 4; // 4 MiB page

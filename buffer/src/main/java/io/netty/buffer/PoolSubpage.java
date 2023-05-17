@@ -24,13 +24,20 @@ import static io.netty.buffer.PoolChunk.IS_USED_SHIFT;
 import static io.netty.buffer.PoolChunk.IS_SUBPAGE_SHIFT;
 import static io.netty.buffer.SizeClasses.LOG2_QUANTUM;
 
+// PoolSubpage类是用于表示内存池的一个小块，它可以被切分成多个小的子块来分配给不同的对象。
+// 其中，pageShifts和runSize是PoolSubpage类中的两个重要属性。
 final class PoolSubpage<T> implements PoolSubpageMetric {
 
     final PoolChunk<T> chunk; //当前分配内存的chunk
     final int elemSize; //切分后每段大小
-    private final int pageShifts;
+    private final int pageShifts; // pageShifts是一个常量，表示每个内存块的大小为2的pageShifts次方字节。
+    // 它通常用于通过位运算操作快速计算出内存块的偏移量（即内存地址）。
     private final int runOffset; // 当前page在chunk的memorymap中的下标id
-    private final int runSize;
+
+    private final int runSize;/** runSize是指当前PoolSubpage中可供分配的最大连续内存块的大小，也就是所谓的“连续子段”。
+    当PoolSubpage中的内存块被分配出去一部分后，剩余的内存块可能是不连续的，此时就需要重新计算runSize，
+     以确保能够正确地分配和回收内存块，并且避免内存碎片的问题。 */
+
     private final long[] bitmap; //poolSubpage每段内存的占用状态，采用二进制位来标识
 
     PoolSubpage<T> prev;  //指向前一个PoolSubpage
@@ -99,6 +106,11 @@ final class PoolSubpage<T> implements PoolSubpageMetric {
             throw new AssertionError("No next available bitmap index found (bitmapIdx = " + bitmapIdx + "), " +
                     "even though there are supposed to be (numAvail = " + numAvail + ") " +
                     "out of (maxNumElems = " + maxNumElems + ") available indexes.");
+            /**
+             * throw new AssertionError("找不到下一个可用的位图索引 (bitmapIdx = " + bitmapIdx + "), " +
+             *                     "即使应该有 (numAvail = " + numAvail + ") " +
+             *                     "即使从 (maxNumElems = " + maxNumElems + ")里 可用索引.");
+             */
         }
         // 算出对应index的标志位在数组中的位置q
         int q = bitmapIdx >>> 6;
@@ -184,6 +196,13 @@ final class PoolSubpage<T> implements PoolSubpageMetric {
         head.next = this;
     }
 
+    /**
+     * removeFromPool是PoolChunkList类的一个方法，用于从内存池中移除已经完全空闲且不再被使用的PoolChunk。
+     * 当一个PoolChunk中的所有内存块都被分配出去并且全部释放时，这个PoolChunk就变得完全空闲了。
+     * 此时，为了避免内存泄漏和浪费，应该将这个PoolChunk从内存池中移除，以便其所占用的内存可以被操作系统回收。
+     * removeFromPool方法就是用于执行这个操作的。它会将指定的PoolChunk从相应的PoolChunkList中删除，并且将其所占用的内存归还给操作系统。
+     * 同时，如果PoolChunk所属的Arena也已经完全空闲，那么整个Arena也会被释放掉。这样可以最大限度地减少内存的占用，提高系统的性能和稳定性。
+     */
     private void removeFromPool() {
         assert prev != null && next != null;
         prev.next = next;
@@ -192,10 +211,25 @@ final class PoolSubpage<T> implements PoolSubpageMetric {
         prev = null;
     }
 
-    private void setNextAvail(int bitmapIdx) {
+    /**
+     * 用于设置下一个可用的内存块的索引，即标记PoolSubpage中哪些内存块已经被分配出去了。
+     * 每当有一个内存块被分配出去时，就可以通过setNextAvail方法来更新PoolSubpage的状态，以便下次分配内存块时能够快速找到可用的内存块。
+     * 这样可以提高内存分配的效率，并且避免重复的扫描操作。
+     * 同时，setNextAvail方法也可以用于PoolSubpage中内存块的回收操作，以便将已经释放的内存块重新标记为可用状态。
+     */
+     private void setNextAvail(int bitmapIdx) {
         nextAvail = bitmapIdx;
     }
 
+    /**
+     * 用于获取下一个可用的内存块的索引，即查找PoolSubpage中哪些内存块还没有被分配出去。
+     * 每当需要分配一个新的内存块时，就可以通过getNextAvail方法来查找PoolSubpage中尚未被分配的内存块。
+     * 如果所有的内存块都已经被分配出去了，那么getNextAvail方法会返回-1，表示当前没有可用的内存块可以分配。
+     * 同时，getNextAvail方法也可以用于回收PoolSubpage中已经分配出去的内存块。
+     * 具体来说，它可以将指定的内存块的索引标记为可用状态，以便下次分配内存块时可以重新使用这个内存块。
+     * 这样可以最大限度地利用内存池中的内存资源，提高内存分配和回收的效率。
+     * @return
+     */
     private int getNextAvail() {
         // nextAvail>=0时，表示明确的知道这个element未被分配，此时直接返回就可以了
         // >=0 有两种情况：1、刚初始化；2、有element被释放且还未被分配
@@ -208,6 +242,12 @@ final class PoolSubpage<T> implements PoolSubpageMetric {
         return findNextAvail();
     }
 
+    /**
+     * 通过遍历所有的内存块来查找下一个可用的内存块的索引。
+     * 具体来说，它从nextAvail位置开始逐个检查位图，直到找到一个未被分配的内存块为止。
+     * 如果所有的内存块都已经被分配出去了，那么findNextAvail()方法会返回-1，表示当前没有可用的内存块可以分配。
+     * @return
+     */
     private int findNextAvail() {
         // 没有明确的可用位置时则挨个查找
         final long[] bitmap = this.bitmap;
@@ -222,6 +262,14 @@ final class PoolSubpage<T> implements PoolSubpageMetric {
         return -1;
     }
 
+    /**
+     * findNextAvail0()方法与findNextAvail()方法的实现方式基本相同，唯一的区别是在处理特殊情况时使用了不同的策略。
+     * 具体来说，在findNextAvail0()方法中，如果从nextAvail位置开始检查位图时，发现该位置的位图已经为0，则会跳过这个位置继续往后检查。
+     * 这个特殊的处理方式可以让findNextAvail0()方法更快地找到下一个可用的内存块，从而提高内存分配和回收的效率。
+     * @param i
+     * @param bits
+     * @return
+     */
     private int findNextAvail0(int i, long bits) {
         final int maxNumElems = this.maxNumElems;
         final int baseVal = i << 6;
