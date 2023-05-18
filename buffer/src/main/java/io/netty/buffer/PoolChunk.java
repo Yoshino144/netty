@@ -610,52 +610,77 @@ final class PoolChunk<T> implements PoolChunkMetric {
      * of the owning PoolArena. If the subpage pool in PoolArena has at least one other PoolSubpage of given elemSize,
      * we can completely free the owning Page so it is available for subsequent allocations
      *
-     * @param handle handle to free
+     * 释放一个子页面或一个运行的页面 当一个子页面从PoolSubpage中被释放时，
+     * 它可能会被加回到拥有PoolArena的子页面池中。如果PoolArena的子页池中至少有一个给定的elemSize的PoolSubpage，
+     * 我们可以完全释放拥有的Page，这样它就可以用于后续的分配。
+     *
+     * 对subpage和run进行回收。
+     *
+     * @param handle 将要被回收的句柄值
      */
     void free(long handle, int normCapacity, ByteBuffer nioBuffer) {
         int runSize = runSize(pageShifts, handle);
-        if (isSubpage(handle)) {
-            int sizeIdx = arena.size2SizeIdx(normCapacity);
-            PoolSubpage<T> head = arena.findSubpagePoolHead(sizeIdx);
 
+        // 回收subpage
+        if (isSubpage(handle)) {
+            // 根据容量大小获取index
+            int sizeIdx = arena.size2SizeIdx(normCapacity);
+
+            // 获取subpage pool索引对应的链表的头结点（记住，PoolSubpage可是一个链表的结构）
+            // 我们可以把PoolArena中的PoolSubpage想象成一个大池子，这里面的PoolSubpage对象来自各个PoolChunk
+            PoolSubpage<T> head = arena.findSubpagePoolHead(sizeIdx);
+            // 获取偏移量
             int sIdx = runOffset(handle);
+            // 通过偏移量定位 PoolChunk 内部的 PoolSubpage，而这个PoolSubpage只属于PoolChunk
             PoolSubpage<T> subpage = subpages[sIdx];
 
-            // Obtain the head of the PoolSubPage pool that is owned by the PoolArena and synchronize on it.
-            // This is need as we may add it back and so alter the linked-list structure.
-            head.lock();
+            // 获取PoolArena所拥有的PoolSubPage池的头部，并对其进行同步。
+            // 这是有必要的，因为我们可能会把它加回来，从而改变链接列表的结构。
+
+            head.lock(); // head是一个共享变量，需要加锁（可能删除或修改）
             try {
                 assert subpage != null && subpage.doNotDestroy;
+                // 委托「PoolSubpage」释放内存
                 if (subpage.free(head, bitmapIdx(handle))) {
                     //the subpage is still used, do not free it
+                    // 该subpage仍在使用，不要释放它。
+                    // 返回「true」表示当前PoolSubpage对象还在使用，不需要被回收
                     return;
                 }
                 assert !subpage.doNotDestroy;
                 // Null out slot in the array as it was freed and we should not use it anymore.
+                // 空出数组中的槽，因为它已被释放，我们不应该再使用它。
+                // 返回「flase」表示PoolSubpage已经没有被任何地方引用，需要回收
                 subpages[sIdx] = null;
             } finally {
                 head.unlock();
             }
         }
 
-        //start free run
+        //start free run  开始回收 run
         runsAvailLock.lock();
         try {
             // collapse continuous runs, successfully collapsed runs
             // will be removed from runsAvail and runsAvailMap
+            // 向前、后合并与当前run的pageOffset连续的run
             long finalRun = collapseRuns(handle);
 
-            //set run as not used
+            // set run as not used
+            // 更新「isUsed」标志位为 0
             finalRun &= ~(1L << IS_USED_SHIFT);
-            //if it is a subpage, set it to run
+            // if it is a subpage, set it to run
+            // 如果先前handle表示的是subpage，则需要清除标志位
             finalRun &= ~(1L << IS_SUBPAGE_SHIFT);
 
+            // 更新 {@link PoolChunk#runsAvail} 和 {@link PoolChunk#runsAvailMap} 数据结构
             insertAvailRun(runOffset(finalRun), runPages(finalRun), finalRun);
+            // 更新剩余空闲内存块大小
             freeBytes += runSize;
         } finally {
             runsAvailLock.unlock();
         }
 
+        // 回收ByteBuffer对象
         if (nioBuffer != null && cachedNioBuffers != null &&
             cachedNioBuffers.size() < PooledByteBufAllocator.DEFAULT_MAX_CACHED_BYTEBUFFERS_PER_CHUNK) {
             cachedNioBuffers.offer(nioBuffer);
@@ -666,23 +691,37 @@ final class PoolChunk<T> implements PoolChunkMetric {
         return collapseNext(collapsePast(handle));
     }
 
+    /**
+     * 向前合并相邻的 run
+     * @param handle 回收句柄值
+     * @return
+     */
     private long collapsePast(long handle) {
+        // 不断向前合并，直到不能合并为止
         for (;;) {
+            // 获取偏移量
             int runOffset = runOffset(handle);
+            // 获取拥有的page数量
             int runPages = runPages(handle);
 
+            // 根据「runOffset-1」末尾可用的run
             long pastRun = getAvailRunByOffset(runOffset - 1);
             if (pastRun == -1) {
+                // 没有相邻的 run，直接返回
                 return handle;
             }
 
+            // 存在相邻的 run
             int pastOffset = runOffset(pastRun);
             int pastPages = runPages(pastRun);
 
-            //is continuous
+            // 再一次判断是否是连续的: past的偏移量+页数量=run的偏移量
+            // is continuous
             if (pastRun != handle && pastOffset + pastPages == runOffset) {
                 //remove past run
+                // 移除旧的run信息
                 removeAvailRun(pastRun);
+                // 生成新的handle
                 handle = toRunHandle(pastOffset, pastPages + runPages, 0);
             } else {
                 return handle;
