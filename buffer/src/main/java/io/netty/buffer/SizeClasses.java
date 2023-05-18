@@ -18,41 +18,30 @@ package io.netty.buffer;
 import static io.netty.buffer.PoolThreadCache.*;
 
 /**
- * SizeClasses requires {@code pageShifts} to be defined prior to inclusion,
- * and it in turn defines:
+ * SizeClasses要求在包含之前定义{@code pageShifts}，然后定义
  * <p>
- *   LOG2_SIZE_CLASS_GROUP: Log of size class count for each size doubling.
- *   LOG2_MAX_LOOKUP_SIZE: Log of max size class in the lookup table.
- *   sizeClasses: Complete table of [index, log2Group, log2Delta, nDelta, isMultiPageSize,
- *                 isSubPage, log2DeltaLookup] tuples.
- *     index: Size class index.
- *     log2Group: Log of group base size (no deltas added).
- *     log2Delta: Log of delta to previous size class.
- *     nDelta: Delta multiplier.
- *     isMultiPageSize: 'yes' if a multiple of the page size, 'no' otherwise.
- *     isSubPage: 'yes' if a subpage size class, 'no' otherwise.
- *     log2DeltaLookup: Same as log2Delta if a lookup table size class, 'no'
- *                      otherwise.
+ *   LOG2_SIZE_CLASS_GROUP： 每个尺寸翻倍的尺寸类计数的日志。
+ *   LOG2_MAX_LOOKUP_SIZE: 在查找表中最大尺寸类的日志。
+ *   sizeClasses： 完整的[索引、log2Group、log2Delta、nDelta、isMultiPageSize、 isSubPage, log2DeltaLookup] 图元。
+ *      index： 大小类索引。
+ *      log2Group： 组基本大小的对数（不加三角）。
+ *      log2Delta： 与上一个大小类的delta的对数。
+ *      nDelta： Delta乘数。
+ *      isMultiPageSize：如果是页面大小的倍数则为 "是"，否则为 "否"。
+ *      isSubPage： 如果是一个子页面大小类，则为'是'，否则为'否'
+ *      log2DeltaLookup： 如果是查询表大小类，与log2Delta相同，否则为'否'。
+ *    nSubpages： 子页大小类的数量。
+ *    nSizes： 大小类的数量。
+ *    nPSizes： 是pageSize的倍数的大小类的数量。
+ *    smallMaxSizeIdx： 最大的小尺寸类索引。
+ *    lookupMaxClass： 在查找表中包含的最大尺寸类。
+ *    log2NormalMinClass： 最小正常尺寸类的日志。
  * <p>
- *   nSubpages: Number of subpages size classes.
- *   nSizes: Number of size classes.
- *   nPSizes: Number of size classes that are multiples of pageSize.
- *
- *   smallMaxSizeIdx: Maximum small size class index.
- *
- *   lookupMaxClass: Maximum size class included in lookup table.
- *   log2NormalMinClass: Log of minimum normal size class.
- * <p>
- *   The first size class and spacing are 1 << LOG2_QUANTUM.
- *   Each group has 1 << LOG2_SIZE_CLASS_GROUP of size classes.
- *
+ *   第一个尺寸类和间距是1 << LOG2_QUANTUM。
+ *   每组有1 << LOG2_SIZE_CLASS_GROUP的大小类。
  *   size = 1 << log2Group + nDelta * (1 << log2Delta)
- *
- *   The first size class has an unusual encoding, because the size has to be
- *   split between group and delta*nDelta.
- *
- *   If pageShift = 13, sizeClasses looks like this:
- *
+ *   第一个尺寸类有一个不寻常的编码，因为尺寸必须被分成 在组和delta*nDelta之间分割。
+ *   如果pageShift = 13，sizeClasses看起来像这样：
  *   (index, log2Group, log2Delta, nDelta, isMultiPageSize, isSubPage, log2DeltaLookup)
  * <p>
  *   ( 0,     4,        4,         0,       no,             yes,        4)
@@ -108,17 +97,17 @@ abstract class SizeClasses implements SizeClassesMetric {
 
     private final int[] pageIdx2sizeTab;
 
-    // lookup table for sizeIdx <= smallMaxSizeIdx
+    // sizeIdx <= smallMaxSizeIdx的查询表
     private final int[] sizeIdx2sizeTab;
 
-    // lookup table used for size <= lookupMaxClass
-    // spacing is 1 << LOG2_QUANTUM, so the size of array is lookupMaxClass >> LOG2_QUANTUM
+    // size <= lookupMaxClass 时使用的查找表
+    // 间隔是1 << LOG2_QUANTUM, 所以数组的大小是lookupMaxClass >> LOG2_QUANTUM
     private final int[] size2idxTab;
 
     protected SizeClasses(int pageSize, int pageShifts, int chunkSize, int directMemoryCacheAlignment) {
         int group = log2(chunkSize) - LOG2_QUANTUM - LOG2_SIZE_CLASS_GROUP + 1;
 
-        //generate size classes
+        //生成大小等级
         //[index, log2Group, log2Delta, nDelta, isMultiPageSize, isSubPage, log2DeltaLookup]
         short[][] sizeClasses = new short[group << LOG2_SIZE_CLASS_GROUP][7];
 
@@ -313,6 +302,13 @@ abstract class SizeClasses implements SizeClassesMetric {
         return groupSize + modSize;
     }
 
+    /**
+     * 将请求的大小规范化到最接近的大小等级。
+     *
+     * @param size 请求大小
+     *
+     * @return sizeIdx of the size class
+     */
     @Override
     public int size2SizeIdx(int size) {
         if (size == 0) {
@@ -348,6 +344,12 @@ abstract class SizeClasses implements SizeClassesMetric {
         return pages2pageIdxCompute(pages, false);
     }
 
+    /**
+     * 将请求大小规范化为最接近的pageSize类。
+     * @param pages multiples of pageSizes
+     *
+     * @return
+     */
     @Override
     public int pages2pageIdxFloor(int pages) {
         return pages2pageIdxCompute(pages, true);

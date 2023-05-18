@@ -18,14 +18,15 @@ package io.netty.buffer;
 import java.util.Arrays;
 
 /**
- * Internal primitive priority queue, used by {@link PoolChunk}.
- * The implementation is based on the binary heap, as described in Algorithms by Sedgewick and Wayne.
+ * 内部原始优先级队列，由{@link PoolChunk}使用。
+ * 该实现基于二叉堆，如Sedgewick和Wayne的《算法》中所述。
  */
 final class LongPriorityQueue {
     public static final int NO_VALUE = -1;
     private long[] array = new long[9];
     private int size;
 
+    // 将指定的元素插入到队列中
     public void offer(long handle) {
         if (handle == NO_VALUE) {
             throw new IllegalArgumentException("The NO_VALUE (" + NO_VALUE + ") cannot be added to the queue.");
